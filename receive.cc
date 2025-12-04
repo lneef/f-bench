@@ -6,7 +6,11 @@
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <getopt.h>
+#include <arpa/inet.h>
+#include <cstdlib>
 
+#include "defs.h"
 #define MAX_PKT_SIZE 1440
 #define MAX_BACKLOG 16
 #define MAX_EVENTS 128
@@ -58,20 +62,22 @@ int main(int argc, char **argv) {
   struct net_if info = {
       .pkt_size = 1400,
   };
-  int ret;
+  int ret, opt;
+  struct sockaddr_in addr = {0};
 
+  while((opt = getopt(argc - ARGS, argv + ARGS, "p:")) != -1){
+      switch(opt){
+          case 'p':
+              addr.sin_port = htons(std::atoi(optarg));
+              break;
+      }
+  }
   info.sockfd = ff_socket(AF_INET, SOCK_STREAM, 0);
   if (info.sockfd < 0) {
     return -1;
   }
 
-  struct addrinfo hints = {
-      .ai_family = AF_INET,
-  };
-
-  struct sockaddr_in addr = {0};
   addr.sin_family = AF_INET;
-  addr.sin_port = 0;
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
   ret = ff_bind(info.sockfd, (struct linux_sockaddr *)&addr, sizeof(addr));
 
