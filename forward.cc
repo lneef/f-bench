@@ -1,77 +1,117 @@
 #include "ff_api.h"
-#include <algorithm>
+#include <aio.h>
+#include <arpa/inet.h>
 #include <bits/getopt_core.h>
+#include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <getopt.h>
+#include <iostream>
+#include <linux/aio_abi.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <numeric>
+#include <ostream>
 #include <stddef.h>
+#include <format>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <aio.h>
-#include <linux/aio_abi.h>
-#include <getopt.h>
-#include <arpa/inet.h>
 
+#include <thread>
 #include <vector>
+#include <atomic>
 
 #include "defs.h"
-#define MAX_PKT_SIZE 1440
-struct net_if {
-  int sock_fd;
+struct forward_settings {
   size_t pkt_size;
+  struct sockaddr_in addr;
+  std::atomic<bool> running;
+  std::vector<uint64_t> pkts;
+  std::vector<int> fds;
 };
 
-int forward(void* arg) { 
+static void create_n_connections(forward_settings& info, unsigned int n){
+    for(auto i = 0u; i < n; ++i){
+        int sock_fd = ff_socket(AF_INET, SOCK_STREAM, 0);
+        if(sock_fd < 0)
+            throw std::runtime_error(std::format("Failed to open socket: {}\n", strerror(errno)));
+        if(ff_connect(sock_fd, reinterpret_cast<linux_sockaddr*>(&info.addr), sizeof(info.addr)))
+            throw std::runtime_error(std::format("Failed to connect to server: {}\n", strerror(errno)));
+        info.fds.push_back(sock_fd);
+    }
+}
 
-    struct net_if *info = (struct net_if*)arg;
-    std::vector<ff_zc_mbuf*> sendbufs(PKT_BURST_SIZE, nullptr);
-    std::vector<ff_zc_mbuf*> recvbufs(PKT_BURST_SIZE, nullptr);
-    auto populate = [info](ff_zc_mbuf*& buf){
-        ff_zc_mbuf_get(buf, info->pkt_size);
-    };
-    std::ranges::for_each_n(sendbufs.begin(), PKT_BURST_SIZE, populate);
+void forward(forward_settings& info, int tid) {
+  auto peer = info.fds[tid];
+  uint64_t pkts = 0;
+  ff_zc_mbuf *mbuf; 
+  while(!info.running.load())
+      ;
+  while(info.running.load()){
+      if(ff_zc_mbuf_get(mbuf, info.pkt_size))
+          return;
+      if(ff_write(peer, mbuf, info.pkt_size) < info.pkt_size)
+          return;
+      ++pkts;
+  }
+  info.pkts[tid] = pkts;
 
-    int ret;
-    size_t off;
-    struct ff_zc_mbuf* pkt;
-    for(auto* pkt: sendbufs)
-        ff_write(info->sock_fd, pkt->bsd_mbuf, info->pkt_size);
-    return 0;
 }
 
 int main(int argc, char **argv) {
   ff_init(argc, argv);
-  struct net_if info = {
-      .pkt_size = 1400,
-  };
+  forward_settings info{};
   int opt;
   uint16_t port;
-  struct sockaddr_in addr = {0};
-
-  while((opt = getopt(argc - ARGS, argv + ARGS, "p:a:")) != -1){
-      switch(opt){
-          case 'p':
-              addr.sin_port = htons(std::atoi(optarg));
-              break;
-        case 'a':
-              addr.sin_addr.s_addr = inet_addr(optarg);
-              break;
-      }
-  }
-  int ret;
-  info.sock_fd = ff_socket(AF_INET, SOCK_STREAM, 0);
-  if (info.sock_fd < 0) {
-    return -1;
-  }
-
+  uint16_t connections, cores, seconds;
+  auto &addr = info.addr;
   addr.sin_family = AF_INET;
-  do {
-    ret =
-        ff_connect(info.sock_fd, (struct linux_sockaddr *)&addr, sizeof(addr));
-  } while (ret);
+  while ((opt = getopt(argc - ARGS, argv + ARGS, "p:a:s:t:n:c:")) != -1) {
+    switch (opt) {
+    case 'p':
+      addr.sin_port = htons(std::atoi(optarg));
+      break;
+    case 'a':
+      addr.sin_addr.s_addr = inet_addr(optarg);
+      break;
+    case 's':
+      info.pkt_size = std::atol(optarg);
+      break;
+    case 't':
+      seconds = std::atol(optarg);
+      break;
+    case 'n':
+      connections = std::atoi(optarg);
+      break;
+    case 'c':
+      cores = std::atoi(optarg);
+      break;
+    }
+  }
 
-  ff_run(forward, &info);
-
+  uint16_t i = 0;
+  std::vector<int> cons(connections);
+  info.pkts.resize(cores, 0);
+  create_n_connections(info, connections);
+  std::vector<std::thread> threads(cores);
+  for(auto& t: threads){
+      t = std::thread(forward, std::ref(info), cons[i++]);
+  }
+  info.running.store(true);
+  auto start = std::chrono::system_clock::now();
+  sleep(seconds);
+  auto end = std::chrono::system_clock::now();
+  for(auto& t: threads){
+      t.join();
+  }
+  auto total = std::reduce(info.pkts.begin(), info.pkts.end()); 
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  auto out = std::format("Sent {} in {}ms - PPS: {:2}\n", total, duration, static_cast<double>(total) / duration / 1000);
+  std::cout << out;
+  std::cout << std::flush;
   return 0;
 }

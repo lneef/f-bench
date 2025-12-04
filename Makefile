@@ -16,11 +16,11 @@ LIBS+= -L${FF_PATH}/lib -Wl,--whole-archive,-lfstack,--no-whole-archive
 LIBS+= -Wl,--no-whole-archive -lrt -lm -ldl -lcrypto -pthread -lnuma
 LIBS+= $(shell $(PKGCONF) --libs libdpdk)
 
-TARGET_FORWARD="main_forward"
-TARGET_RECV="receive"
+TARGET_FORWARD="forward"
+TARGET_RECV="server"
 all:
 	cc ${CXXFLAGS} -DINET6 -o ${TARGET_FORWARD} forward.cc ${LIBS}
-	cc ${CXXFLAGS} -o ${TARGET_RECV} receive.cc ${LIBS}
+	cc ${CXXFLAGS} -o ${TARGET_RECV} server.cc ${LIBS}
 
 .PHONY: clean
 clean:
