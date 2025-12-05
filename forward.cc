@@ -70,6 +70,7 @@ int connect_loop(void *arg) {
   if (rte_lcore_index(rte_lcore_id()) == 0)
     if (running == rte_lcore_count())
       ff_stop_run();
+  return 0;
 }
 
 int forward(void *arg) {

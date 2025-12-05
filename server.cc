@@ -90,7 +90,8 @@ int receiver_fn(void *arg) {
   for (auto &event : std::ranges::subrange(rc.events, nevents)) {
     auto clientfd = event.ident;
     if (event.filter == EVFILT_READ) {
-      auto read = ff_recv(clientfd, rc.buf.data(), rc.buf.size(), MSG_WAITALL);
+      (void)ff_recv(clientfd, rc.buf.data(), rc.buf.size(), MSG_WAITALL);
+
     }
   }
   return 0;
@@ -98,7 +99,7 @@ int receiver_fn(void *arg) {
 
 int main(int argc, char **argv) {
   ff_init(argc, argv);
-  int ret, opt;
+  int opt;
   struct sockaddr_in addr = {0};
   addr.sin_port = htons(PORT);
   while ((opt = getopt(argc - ARGS, argv + ARGS, "p:s:")) != -1) {
