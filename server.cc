@@ -1,6 +1,7 @@
 #include "defs.h"
 #include "ff_api.h"
 #include "ff_kqueue.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <asm-generic/ioctls.h>
 #include <atomic>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <getopt.h>
 #include <netdb.h>
@@ -24,7 +26,8 @@
 
 #define MAX_EVENTS 512 
 
-uint64_t pkt_size = 64;
+static constexpr uint64_t pkt_size = 64;
+static constexpr uint16_t PORT = 30000;
 
 struct receiver_context {
   int kq;
@@ -42,7 +45,8 @@ struct server_context {
   struct kevent events[MAX_EVENTS];
   std::vector<int> clients;
 };
-static int create_server_socket(struct sockaddr_in &addr, unsigned int n) {
+
+static int create_server_socket(struct sockaddr_in &addr) {
   int sockfd = ff_socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd < 0)
     throw std::runtime_error(
@@ -50,7 +54,7 @@ static int create_server_socket(struct sockaddr_in &addr, unsigned int n) {
   if (ff_bind(sockfd, (struct linux_sockaddr *)&addr, sizeof(addr)))
     throw std::runtime_error(
         std::format("Socket creation failed with: {}\n", strerror(errno)));
-  if (ff_listen(sockfd, n))
+  if (ff_listen(sockfd, rte_lcore_count()))
     throw std::runtime_error(
         std::format("Socket creation failed with: {}\n", strerror(errno)));
   return sockfd;
@@ -62,7 +66,7 @@ static int accept_n_connections(void *arg) {
     return 0;
   int nevents = ff_kevent(sc->kq, NULL, 0, sc->events, MAX_EVENTS, NULL);
   for (auto &event : std::ranges::subrange(sc->events, nevents)) {
-    auto clientfd = event.ident;
+    auto clientfd = static_cast<int>(event.ident);
     if (clientfd == sc->sockfd) {
       int available = (int)event.data;
       do {
@@ -79,7 +83,7 @@ static int accept_n_connections(void *arg) {
 }
 
 int receiver_fn(void *arg) {
-  auto *bc = static_cast<benchmark_context *>(arg);
+  auto &bc = *static_cast<benchmark_context *>(arg);
   auto &rc = bc[rte_lcore_index(rte_lcore_id())];
   int nevents = ff_kevent(rc.kq, NULL, 0, rc->events, MAX_EVENTS, NULL);
   for (auto &event : std::ranges::subrange(rc->events, nevents)) {
@@ -95,7 +99,7 @@ int main(int argc, char **argv) {
   ff_init(argc, argv);
   int ret, opt;
   struct sockaddr_in addr = {0};
-
+  addr.sin_port = htons(PORT);
   while ((opt = getopt(argc - ARGS, argv + ARGS, "p:s:")) != -1) {
     switch (opt) {
     case 'p':
@@ -106,26 +110,25 @@ int main(int argc, char **argv) {
       break;
     }
   }
-  info.sockfd = ff_socket(AF_INET, SOCK_STREAM, 0);
-  if (info.sockfd < 0) {
-    return -1;
-  }
+
+  server_context sc;
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  info.sockfd = create_server_socket(addr, num_con);
+  sc.sockfd = create_server_socket(addr);
   int on = 1;
-  unsigned int tn = 0;
-  ff_setsockopt(info.sockfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-  server_context sc;
+  ff_setsockopt(sc.sockfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+  std::std::cout << "Accepting connections on " << ntohs(addr.sin_port) << std::endl;
   ff_run(accept_n_connections, &sc);
   benchmark_context rcs(rte_lcore_count());
-  auto *it = sc.clients.begin();
+  auto it = sc.clients.begin();
   for (auto &rc : rcs) {
-    rc.kd = ff_kqueue();
+    rc.kq = ff_kqueue();
     EV_SET(&rc.kevSet, *(it++), EVFILT_READ, EV_ADD, 0, MAX_EVENTS, NULL);
     ff_kevent(rc.kq, &rc.kevSet, 1, NULL, 0, NULL);
   }
   ff_run(receiver_fn, &benchmark_context);
-  ff_close(info.sockfd);
+  for(auto cl : sc.clients)
+      close(cl);
+  ff_close(sc.sockfd);
   return 0;
 }
