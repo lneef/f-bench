@@ -1,4 +1,4 @@
-project('tcp_cpu', ['cpp'], default_options : ['buildtype=release', 'cpp_std=c++20'])
+project('f-bench', ['cpp'], default_options : ['buildtype=release', 'cpp_std=c++20'])
 
 fmt_dep = dependency('fmt')
 fstack = declare_dependency(
@@ -17,5 +17,5 @@ syslibs = declare_dependency(
   ]
 )
 dpdk_dep = dependency('libdpdk', method: 'pkg-config', required: true, static: true)
-sources_m = files('net_bench.cpp')
-executable('nb', sources_m, dependencies: [fmt_dep, fstack, dpdk_dep, syslibs])
+sources_f = files('forward.cc')
+executable('nb', sources_f, dependencies: [fmt_dep, fstack, dpdk_dep, syslibs])
