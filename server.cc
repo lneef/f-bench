@@ -4,7 +4,6 @@
 #include <asm-generic/ioctls.h>
 #include <atomic>
 #include <bits/getopt_core.h>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <format>

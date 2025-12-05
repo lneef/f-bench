@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <format>
 #include <getopt.h>
 #include <iostream>
 #include <linux/aio_abi.h>
@@ -16,15 +17,15 @@
 #include <numeric>
 #include <ostream>
 #include <stddef.h>
-#include <format>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <sys/types.h>
 
+#include <atomic>
 #include <thread>
 #include <vector>
-#include <atomic>
 
+#include "PerfEvent.hpp"
 #include "defs.h"
 struct forward_settings {
   size_t pkt_size;
@@ -34,32 +35,34 @@ struct forward_settings {
   std::vector<int> fds;
 };
 
-static void create_n_connections(forward_settings& info, unsigned int n){
-    for(auto i = 0u; i < n; ++i){
-        int sock_fd = ff_socket(AF_INET, SOCK_STREAM, 0);
-        if(sock_fd < 0)
-            throw std::runtime_error(std::format("Failed to open socket: {}\n", strerror(errno)));
-        if(ff_connect(sock_fd, reinterpret_cast<linux_sockaddr*>(&info.addr), sizeof(info.addr)))
-            throw std::runtime_error(std::format("Failed to connect to server: {}\n", strerror(errno)));
-        info.fds.push_back(sock_fd);
-    }
+static void create_n_connections(forward_settings &info, unsigned int n) {
+  for (auto i = 0u; i < n; ++i) {
+    int sock_fd = ff_socket(AF_INET, SOCK_STREAM, 0);
+    if (sock_fd < 0)
+      throw std::runtime_error(
+          std::format("Failed to open socket: {}\n", strerror(errno)));
+    if (ff_connect(sock_fd, reinterpret_cast<linux_sockaddr *>(&info.addr),
+                   sizeof(info.addr)))
+      throw std::runtime_error(
+          std::format("Failed to connect to server: {}\n", strerror(errno)));
+    info.fds.push_back(sock_fd);
+  }
 }
 
-void forward(forward_settings& info, int tid) {
+void forward(forward_settings &info, int tid) {
   auto peer = info.fds[tid];
   uint64_t pkts = 0;
-  ff_zc_mbuf *mbuf; 
-  while(!info.running.load())
-      ;
-  while(info.running.load()){
-      if(ff_zc_mbuf_get(mbuf, info.pkt_size))
-          return;
-      if(ff_write(peer, mbuf, info.pkt_size) < info.pkt_size)
-          return;
-      ++pkts;
+  ff_zc_mbuf *mbuf;
+  while (!info.running.load())
+    ;
+  while (info.running.load()) {
+    if (ff_zc_mbuf_get(mbuf, info.pkt_size))
+      return;
+    if (ff_write(peer, mbuf, info.pkt_size) < info.pkt_size)
+      return;
+    ++pkts;
   }
   info.pkts[tid] = pkts;
-
 }
 
 int main(int argc, char **argv) {
@@ -98,19 +101,28 @@ int main(int argc, char **argv) {
   info.pkts.resize(cores, 0);
   create_n_connections(info, connections);
   std::vector<std::thread> threads(cores);
-  for(auto& t: threads){
-      t = std::thread(forward, std::ref(info), cons[i++]);
+  PerfEvent event;
+  for (auto &t : threads) {
+    t = std::thread(forward, std::ref(info), cons[i++]);
   }
-  info.running.store(true);
-  auto start = std::chrono::system_clock::now();
-  sleep(seconds);
-  auto end = std::chrono::system_clock::now();
-  for(auto& t: threads){
+
+    auto start = std::chrono::system_clock::now();
+  {
+    PerfEventBlock perf(event);
+    info.running.store(true);
+    sleep(seconds);
+    for (auto &t : threads) {
       t.join();
+    }
   }
-  auto total = std::reduce(info.pkts.begin(), info.pkts.end()); 
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  auto out = std::format("Sent {} in {}ms - PPS: {:2}\n", total, duration, static_cast<double>(total) / duration / 1000);
+
+    auto end = std::chrono::system_clock::now();
+  auto total = std::reduce(info.pkts.begin(), info.pkts.end());
+  auto duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+          .count();
+  auto out = std::format("Sent {} in {}ms - PPS: {:2}\n", total, duration,
+                         static_cast<double>(total) / duration / 1000);
   std::cout << out;
   std::cout << std::flush;
   return 0;
