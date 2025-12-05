@@ -1,5 +1,7 @@
-project('f-bench', ['cpp'], default_options : ['buildtype=release', 'cpp_std=c++20'])
+project('tcp_cpu', ['cpp'], default_options : ['buildtype=release', 'cpp_std=c++20'])
 
+
+fmt_dep = dependency('fmt')
 fstack = declare_dependency(
   link_args : ['/usr/local/lib/libfstack.a'],
   include_directories : include_directories('/usr/local/include')
@@ -16,7 +18,8 @@ syslibs = declare_dependency(
   ]
 )
 dpdk_dep = dependency('libdpdk', method: 'pkg-config', required: true, static: true)
-sources_f = files('forward.cc')
-executable('foward', sources_f, dependencies: [fstack, dpdk_dep, syslibs])
-sources_r = files('receive.cc')
-executable('receive', sources_r, dependencies: [fstack, dpdk_dep, syslibs])
+uring = dependency('liburing-ffi')
+tbb = dependency('tbb')
+
+sources_m = files('net_bench.cpp')
+executable('nb', sources_m, dependencies: [fmt_dep, uring, fstack, dpdk_dep, syslibs])

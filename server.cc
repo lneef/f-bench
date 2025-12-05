@@ -21,17 +21,8 @@
 #include <sys/types.h>
 #include <thread>
 #include <vector>
-#define MAX_PKT_SIZE 1440
-#define MAX_EVENTS 128
 
-struct server_settings {
-  int sockfd;
-  size_t pkt_size;
-  struct sockaddr_in addr;
-  std::atomic<bool> running;
-  std::vector<uint64_t> pkts;
-  std::vector<int> fds;
-};
+#define MAX_EVENTS 512 
 
 uint64_t pkt_size = 64;
 
@@ -46,7 +37,6 @@ using benchmark_context = std::vector<receiver_context>;
 
 struct server_context {
   int sockfd;
-#define MAX_EVENTS 512
   int kq;
   struct kevent kevSet;
   struct kevent events[MAX_EVENTS];
@@ -103,7 +93,6 @@ int receiver_fn(void *arg) {
 
 int main(int argc, char **argv) {
   ff_init(argc, argv);
-  server_settings info = {};
   int ret, opt;
   struct sockaddr_in addr = {0};
 
@@ -113,7 +102,7 @@ int main(int argc, char **argv) {
       addr.sin_port = htons(std::atoi(optarg));
       break;
     case 's':
-      info.pkt_size = std::atoi(optarg);
+      pkt_size = std::atoi(optarg);
       break;
     }
   }
