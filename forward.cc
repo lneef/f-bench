@@ -92,9 +92,8 @@ int main(int argc, char **argv) {
   ff_init(argc, argv);
   forward_settings info{};
   int opt;
-  uint16_t connections, cores;
   addr.sin_family = AF_INET;
-  while ((opt = getopt(argc - ARGS, argv + ARGS, "p:a:s:t:n:c:")) != -1) {
+  while ((opt = getopt(argc - ARGS, argv + ARGS, "p:a:s:t:n:")) != -1) {
     switch (opt) {
     case 'p':
       addr.sin_port = htons(std::atoi(optarg));
@@ -107,9 +106,6 @@ int main(int argc, char **argv) {
       break;
     case 't':
       seconds = std::atol(optarg);
-      break;
-    case 'c':
-      cores = std::atoi(optarg);
       break;
     }
   }
