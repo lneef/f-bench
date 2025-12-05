@@ -77,8 +77,8 @@ int forward(void *arg) {
   auto *bc = static_cast<benchmark_context *>(arg);
   auto myid = rte_lcore_index(rte_lcore_id());
   auto *tc = &bc->threads[myid];
-  ff_zc_mbuf *mbuf;
-  ff_zc_mbuf_get(mbuf, data_len);
+  ff_zc_mbuf mbuf;
+  ff_zc_mbuf_get(&mbuf, data_len);
   if (ff_write(tc->sockfd, mbuf.bsd_mbuf, data_len) < data_len)
     return -1;
   tc->pkts++;
