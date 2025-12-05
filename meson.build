@@ -18,5 +18,5 @@ syslibs = declare_dependency(
 dpdk_dep = dependency('libdpdk', method: 'pkg-config', required: true, static: true)
 sources_f = files('forward.cc')
 executable('foward', sources_f, dependencies: [fstack, dpdk_dep, syslibs])
-sources_r = files('receive.cc')
-executable('receive', sources_r, dependencies: [fstack, dpdk_dep, syslibs])
+sources_r = files('server.cc')
+executable('server', sources_r, dependencies: [fstack, dpdk_dep, syslibs])
