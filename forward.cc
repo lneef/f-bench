@@ -79,7 +79,7 @@ int forward(void *arg) {
   auto *tc = &bc->threads[myid];
   ff_zc_mbuf *mbuf;
   ff_zc_mbuf_get(mbuf, data_len);
-  if (ff_write(tc->sockfd, mbuf, data_len) < data_len)
+  if (ff_write(tc->sockfd, mbuf.bsd_mbuf, data_len) < data_len)
     return -1;
   tc->pkts++;
 
