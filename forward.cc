@@ -11,10 +11,8 @@
 #include <iostream>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <numeric>
 #include <ostream>
 #include <stddef.h>
-#include <stdexcept>
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -22,14 +20,13 @@
 #include <rte_lcore.h>
 
 #include <atomic>
-#include <thread>
 #include <vector>
 
 #include "PerfEvent.hpp"
 #include "defs.h"
 
-#include "ff_event.h"
 #include "ff_api.h"
+#include "ff_event.h"
 struct forward_settings {
   std::vector<int> fds;
 };
@@ -40,15 +37,15 @@ std::atomic<uint16_t> running{};
 uint64_t seconds;
 std::chrono::system_clock::time_point start, end, deadline;
 
-struct thread_context{
-    bool connectd;
-    int kq;
-    int sockfd;
-    uint64_t pkts;
+struct thread_context {
+  bool connectd;
+  int kq;
+  int sockfd;
+  uint64_t pkts;
 };
 
-struct benchmark_context{
-    std::vector<thread_context> threads;
+struct benchmark_context {
+  std::vector<thread_context> threads;
 };
 
 static void create_n_connections(forward_settings &info, unsigned int n) {
@@ -61,36 +58,37 @@ static void create_n_connections(forward_settings &info, unsigned int n) {
   }
 }
 
-int forward(void* arg){
-    auto *bc = static_cast<benchmark_context*>(arg);
-    auto myid = rte_lcore_index(rte_lcore_id());
-    auto *tc = &bc->threads[myid];
+int connect_loop(void *arg) {
+  auto *bc = static_cast<benchmark_context *>(arg);
+  auto myid = rte_lcore_index(rte_lcore_id());
+  auto *tc = &bc->threads[myid];
+  if (!tc->connectd) {
+    auto myaddr = addr;
+    if (ff_connect(tc->sockfd, (struct linux_sockaddr *)&myaddr,
+                   sizeof(myaddr)))
+      return -1;
+    tc->connectd = true;
+    ++running;
+  }
+  if (rte_lcore_index(rte_lcore_id()) == 0)
+    if (running == rte_lcore_count())
+      ff_stop_run();
+}
 
-    if(!tc->connectd){
-        auto myaddr = addr;
-        if(ff_connect(tc->sockfd, (struct linux_sockaddr*)&myaddr, sizeof(myaddr)))
-            return 0;
-        tc->connectd = true;
-        ++running;
-    }else{
-        ff_zc_mbuf *mbuf;
-        ff_zc_mbuf_get(mbuf, data_len);
-        if(ff_write(tc->sockfd, mbuf, data_len) < data_len)
-            return -1;
-        tc->pkts++;
-    }
+int forward(void *arg) {
+  auto *bc = static_cast<benchmark_context *>(arg);
+  auto myid = rte_lcore_index(rte_lcore_id());
+  auto *tc = &bc->threads[myid];
+  ff_zc_mbuf *mbuf;
+  ff_zc_mbuf_get(mbuf, data_len);
+  if (ff_write(tc->sockfd, mbuf, data_len) < data_len)
+    return -1;
+  tc->pkts++;
 
-    if(rte_lcore_id() == 0){
-        if(running == rte_lcore_count()){
-            start = std::chrono::system_clock::now();
-            deadline = start += std::chrono::seconds(seconds); 
-            running = 0;
-        }
-        if(std::chrono::system_clock::now() >= deadline)
-            ff_stop_run();
-    }
-    return 0;
+  if (std::chrono::system_clock::now() >= deadline)
+    ff_stop_run();
 
+  return 0;
 }
 
 int main(int argc, char **argv) {
@@ -121,12 +119,15 @@ int main(int argc, char **argv) {
   std::vector<thread_context> tcs(rte_lcore_count());
   create_n_connections(info, rte_lcore_count());
   auto it = info.fds.begin();
-  for(auto& tc: tcs){
-      tc.sockfd = *(it++);
+  for (auto &tc : tcs) {
+    tc.sockfd = *(it++);
   }
   benchmark_context ctx;
   ctx.threads = std::move(tcs);
+  ff_run(connect_loop, &benchmark_context);
+
   PerfEvent event;
+  start = std::chrono::system_clock::now();
   {
     PerfEventBlock perf(event);
     ff_run(forward, &ctx);
@@ -136,8 +137,8 @@ int main(int argc, char **argv) {
       std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
           .count();
   uint64_t total = 0;
-  for(auto& tc: tcs){
-      total += tc.pkts;
+  for (auto &tc : tcs) {
+    total += tc.pkts;
   }
   auto out = std::format("Sent {} in {}ms - PPS: {:2}\n", total, duration,
                          static_cast<double>(total) / duration / 1000);
