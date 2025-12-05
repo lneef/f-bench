@@ -4,9 +4,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
-#include <ctime>
-#include <format>
 #include <getopt.h>
 #include <iostream>
 #include <netdb.h>
@@ -124,7 +121,7 @@ int main(int argc, char **argv) {
   }
   benchmark_context ctx;
   ctx.threads = std::move(tcs);
-  ff_run(connect_loop, &benchmark_context);
+  ff_run(connect_loop, &ctx);
 
   PerfEvent event;
   start = std::chrono::system_clock::now();

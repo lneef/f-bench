@@ -1,6 +1,5 @@
 #include "defs.h"
 #include "ff_api.h"
-#include "ff_kqueue.h"
 #include <algorithm>
 #include <arpa/inet.h>
 #include <asm-generic/ioctls.h>
