@@ -25,8 +25,8 @@
 
 #define MAX_EVENTS 512 
 
-static constexpr uint64_t pkt_size = 64;
-static constexpr uint16_t PORT = 30000;
+static uint64_t pkt_size = 64;
+static uint16_t PORT = 30000;
 
 struct receiver_context {
   int kq;
@@ -79,13 +79,14 @@ static int accept_n_connections(void *arg) {
     if (sc->clients.size() >= rte_lcore_count())
       ff_stop_run();
   }
+  return 0;
 }
 
 int receiver_fn(void *arg) {
   auto &bc = *static_cast<benchmark_context *>(arg);
   auto &rc = bc[rte_lcore_index(rte_lcore_id())];
-  int nevents = ff_kevent(rc.kq, NULL, 0, rc->events, MAX_EVENTS, NULL);
-  for (auto &event : std::ranges::subrange(rc->events, nevents)) {
+  int nevents = ff_kevent(rc.kq, NULL, 0, rc.events, MAX_EVENTS, NULL);
+  for (auto &event : std::ranges::subrange(rc.events, nevents)) {
     auto clientfd = event.ident;
     if (event.filter == EVFILT_READ) {
       auto read = ff_recv(clientfd, rc.buf.data(), rc.buf.size(), MSG_WAITALL);
@@ -116,7 +117,8 @@ int main(int argc, char **argv) {
   sc.sockfd = create_server_socket(addr);
   int on = 1;
   ff_setsockopt(sc.sockfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-  std::std::cout << "Accepting connections on " << ntohs(addr.sin_port) << std::endl;
+  std::cout << "Accepting connections on " << ntohs(addr.sin_port) << std::endl;
+
   ff_run(accept_n_connections, &sc);
   benchmark_context rcs(rte_lcore_count());
   auto it = sc.clients.begin();
