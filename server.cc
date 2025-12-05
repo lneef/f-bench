@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <thread>
 #include <vector>
+#include <iostream>
 
 #define MAX_EVENTS 512 
 
@@ -127,7 +128,7 @@ int main(int argc, char **argv) {
     EV_SET(&rc.kevSet, *(it++), EVFILT_READ, EV_ADD, 0, MAX_EVENTS, NULL);
     ff_kevent(rc.kq, &rc.kevSet, 1, NULL, 0, NULL);
   }
-  ff_run(receiver_fn, &benchmark_context);
+  ff_run(receiver_fn, &rcs);
   for(auto cl : sc.clients)
       close(cl);
   ff_close(sc.sockfd);
