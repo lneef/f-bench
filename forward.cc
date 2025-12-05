@@ -31,21 +31,19 @@
 #include "ff_event.h"
 #include "ff_api.h"
 struct forward_settings {
-  size_t pkt_size;
   std::vector<int> fds;
 };
 
 sockaddr_in addr{};
 uint64_t data_len = 64;
 std::atomic<uint16_t> running{};
+uint64_t seconds;
+std::chrono::system_clock::time_point start, end, deadline;
 
 struct thread_context{
     bool connectd;
     int kq;
     int sockfd;
-    #define MAX_EVENTS 512
-    struct kevent kevSet;
-    struct kevent events[MAX_EVENTS];
     uint64_t pkts;
 };
 
@@ -67,14 +65,12 @@ int forward(void* arg){
     auto *bc = static_cast<benchmark_context*>(arg);
     auto myid = rte_lcore_index(rte_lcore_id());
     auto *tc = &bc->threads[myid];
+
     if(!tc->connectd){
         auto myaddr = addr;
         if(ff_connect(tc->sockfd, (struct linux_sockaddr*)&myaddr, sizeof(myaddr)))
-            return -1;
+            return 0;
         tc->connectd = true;
-        tc->kq = ff_kqueue();
-        EV_SET(&tc->kevSet, tc->sockfd, EVFILT_WRITE, EV_ADD, 0, MAX_EVENTS, NULL);
-        ff_kevent(tc->kq, &tc->kevSet, 1, NULL, 0, NULL);
         ++running;
     }else{
         ff_zc_mbuf *mbuf;
@@ -82,6 +78,16 @@ int forward(void* arg){
         if(ff_write(tc->sockfd, mbuf, data_len) < data_len)
             return -1;
         tc->pkts++;
+    }
+
+    if(rte_lcore_id() == 0){
+        if(running == rte_lcore_count()){
+            start = std::chrono::system_clock::now();
+            deadline = start += std::chrono::seconds(seconds); 
+            running = 0;
+        }
+        if(std::chrono::system_clock::now() >= deadline)
+            ff_stop_run();
     }
     return 0;
 
@@ -91,8 +97,7 @@ int main(int argc, char **argv) {
   ff_init(argc, argv);
   forward_settings info{};
   int opt;
-  uint16_t port;
-  uint16_t connections, cores, seconds;
+  uint16_t connections, cores;
   addr.sin_family = AF_INET;
   while ((opt = getopt(argc - ARGS, argv + ARGS, "p:a:s:t:n:c:")) != -1) {
     switch (opt) {
@@ -103,40 +108,37 @@ int main(int argc, char **argv) {
       addr.sin_addr.s_addr = inet_addr(optarg);
       break;
     case 's':
-      info.pkt_size = std::atol(optarg);
+      data_len = std::atol(optarg);
       break;
     case 't':
       seconds = std::atol(optarg);
-      break;
-    case 'n':
-      connections = std::atoi(optarg);
       break;
     case 'c':
       cores = std::atoi(optarg);
       break;
     }
   }
-  std::vector<thread_context> tcs(connections);
-  create_n_connections(info, connections);
+  std::vector<thread_context> tcs(rte_lcore_count());
+  create_n_connections(info, rte_lcore_count());
   auto it = info.fds.begin();
   for(auto& tc: tcs){
       tc.sockfd = *(it++);
   }
- 
-  while(running < rte_lcore_count() - 1)
-      ;
+  benchmark_context ctx;
+  ctx.threads = std::move(tcs);
   PerfEvent event;
-  auto start = std::chrono::system_clock::now();
   {
     PerfEventBlock perf(event);
-    sleep(seconds);
-    ff_run_stop();
+    ff_run(forward, &ctx);
   }
-
-    auto end = std::chrono::system_clock::now();
+  end = std::chrono::system_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
           .count();
+  uint64_t total = 0;
+  for(auto& tc: tcs){
+      total += tc.pkts;
+  }
   auto out = std::format("Sent {} in {}ms - PPS: {:2}\n", total, duration,
                          static_cast<double>(total) / duration / 1000);
   std::cout << out;
