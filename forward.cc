@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <cassert>
 
 #include <rte_eal.h>
 #include <rte_lcore.h>
@@ -37,6 +38,8 @@ std::chrono::system_clock::time_point start, end, deadline;
 struct thread_context {
   bool connectd;
   int kq;
+  struct kevent kevSet;
+  struct kevent events[MAX_EVENTS];
   int sockfd;
   uint64_t pkts;
 };
@@ -62,8 +65,19 @@ int connect_loop(void *arg) {
   if (!tc->connectd) {
     auto myaddr = addr;
     if (ff_connect(tc->sockfd, (struct linux_sockaddr *)&myaddr,
-                   sizeof(myaddr)))
-      return -1;
+                   sizeof(myaddr))) {
+      if (errno == EINPROGRESS) {
+        int nevents = ff_kevent(tc->kq, NULL, 0, tc->events, 1, NULL);
+        if (nevents == 1) {
+          auto &event = tc->events[0];
+          if (event.filter != EVFILT_WRITE)
+            return -1;
+        }
+
+      } else {
+        return -1;
+      }
+    }
     tc->connectd = true;
     ++running;
   }
@@ -83,8 +97,9 @@ int forward(void *arg) {
     return -1;
   tc->pkts++;
 
-  if (std::chrono::system_clock::now() >= deadline)
-    ff_stop_run();
+  if(rte_lcore_index(rte_lcore_id()) == 0)
+    if (std::chrono::system_clock::now() >= deadline)
+        ff_stop_run();
 
   return 0;
 }
@@ -94,7 +109,7 @@ int main(int argc, char **argv) {
   forward_settings info{};
   int opt;
   addr.sin_family = AF_INET;
-  while ((opt = getopt(argc - ARGS, argv + ARGS, "p:a:s:t:n:")) != -1) {
+  while ((opt = getopt(argc, argv, "p:a:s:t:n:")) != -1) {
     switch (opt) {
     case 'p':
       addr.sin_port = htons(std::atoi(optarg));
@@ -113,8 +128,14 @@ int main(int argc, char **argv) {
   std::vector<thread_context> tcs(rte_lcore_count());
   create_n_connections(info, rte_lcore_count());
   auto it = info.fds.begin();
+  int on = 1;
   for (auto &tc : tcs) {
     tc.sockfd = *(it++);
+    assert(tc.sockfd > 0);
+    ff_ioctl(tc.sockfd, FIONBIO, &on);
+    tc.kq = ff_kqueue();
+    EV_SET(&tc.kevSet, tc.sockfd, EVFILT_WRITE, EV_ADD, 0, MAX_EVENTS, NULL);
+    ff_kevent(tc.kq, &tc.kevSet, 1, NULL, 0, NULL);
   }
   benchmark_context ctx;
   ctx.threads = std::move(tcs);

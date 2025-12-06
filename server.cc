@@ -1,30 +1,22 @@
 #include "defs.h"
 #include "ff_api.h"
-#include <algorithm>
 #include <arpa/inet.h>
 #include <asm-generic/ioctls.h>
-#include <atomic>
 #include <bits/getopt_core.h>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <format>
 #include <getopt.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <ranges>
 #include <rte_lcore.h>
 #include <stddef.h>
-#include <stdexcept>
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <thread>
 #include <vector>
 #include <iostream>
-
-#define MAX_EVENTS 512 
+#include <format>
 
 static uint64_t pkt_size = 64;
 static uint16_t PORT = 30000;
@@ -65,6 +57,8 @@ static int accept_n_connections(void *arg) {
   if (rte_lcore_index(rte_lcore_id()) != 0)
     return 0;
   int nevents = ff_kevent(sc->kq, NULL, 0, sc->events, MAX_EVENTS, NULL);
+  if(nevents < 0)
+      return -1;
   for (auto &event : std::ranges::subrange(sc->events, nevents)) {
     auto clientfd = static_cast<int>(event.ident);
     if (clientfd == sc->sockfd) {
@@ -74,6 +68,7 @@ static int accept_n_connections(void *arg) {
         if (nclientfd < 0) {
           break;
         }
+        sc->clients.push_back(nclientfd);
         available--;
       } while (available);
     }
@@ -89,10 +84,8 @@ int receiver_fn(void *arg) {
   int nevents = ff_kevent(rc.kq, NULL, 0, rc.events, MAX_EVENTS, NULL);
   for (auto &event : std::ranges::subrange(rc.events, nevents)) {
     auto clientfd = event.ident;
-    if (event.filter == EVFILT_READ) {
+    if (event.filter == EVFILT_READ)
       (void)ff_recv(clientfd, rc.buf.data(), rc.buf.size(), MSG_WAITALL);
-
-    }
   }
   return 0;
 }
@@ -102,7 +95,7 @@ int main(int argc, char **argv) {
   int opt;
   struct sockaddr_in addr = {0};
   addr.sin_port = htons(PORT);
-  while ((opt = getopt(argc - ARGS, argv + ARGS, "p:s:")) != -1) {
+  while ((opt = getopt(argc, argv, "p:s:")) != -1) {
     switch (opt) {
     case 'p':
       addr.sin_port = htons(std::atoi(optarg));
@@ -131,7 +124,7 @@ int main(int argc, char **argv) {
   }
   ff_run(receiver_fn, &rcs);
   for(auto cl : sc.clients)
-      close(cl);
+      ff_close(cl);
   ff_close(sc.sockfd);
   return 0;
 }
