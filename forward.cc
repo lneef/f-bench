@@ -66,17 +66,13 @@ int connect_loop(void *arg) {
     auto myaddr = addr;
     if (ff_connect(tc->sockfd, (struct linux_sockaddr *)&myaddr,
                    sizeof(myaddr))) {
-      if (errno == EINPROGRESS) {
-        int nevents = ff_kevent(tc->kq, NULL, 0, tc->events, 1, NULL);
-        if (nevents == 1) {
-          auto &event = tc->events[0];
-          if (event.filter != EVFILT_WRITE)
-            return -1;
-        }
+      auto err = errno;  
+      int nevents = ff_kevent(tc->kq, NULL, 0, tc->events, 1, nullptr);
+      if(nevents < 1)
+          return !(err == EINPROGRESS);
+      auto& event = tc->events[0];
+      assert(event.filter == EVFILT_WRITE);
 
-      } else {
-        return -1;
-      }
     }
     tc->connectd = true;
     ++running;

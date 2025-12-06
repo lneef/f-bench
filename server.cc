@@ -3,10 +3,13 @@
 #include <arpa/inet.h>
 #include <asm-generic/ioctls.h>
 #include <bits/getopt_core.h>
+#include <cassert>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <format>
 #include <getopt.h>
+#include <iostream>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <rte_lcore.h>
@@ -15,8 +18,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <vector>
-#include <iostream>
-#include <format>
 
 static uint64_t pkt_size = 64;
 static uint16_t PORT = 30000;
@@ -57,24 +58,24 @@ static int accept_n_connections(void *arg) {
   if (rte_lcore_index(rte_lcore_id()) != 0)
     return 0;
   int nevents = ff_kevent(sc->kq, NULL, 0, sc->events, MAX_EVENTS, NULL);
-  if(nevents < 0)
-      return -1;
+  if (nevents < 0)
+    return -1;
   for (auto &event : std::ranges::subrange(sc->events, nevents)) {
     auto clientfd = static_cast<int>(event.ident);
-    if (clientfd == sc->sockfd) {
-      int available = (int)event.data;
-      do {
-        int nclientfd = ff_accept(clientfd, NULL, NULL);
-        if (nclientfd < 0) {
-          break;
-        }
-        sc->clients.push_back(nclientfd);
-        available--;
-      } while (available);
-    }
-    if (sc->clients.size() >= rte_lcore_count())
-      ff_stop_run();
+    assert(event.filter == EVFILT_READ);
+    int available = (int)event.data;
+    do {
+      int nclientfd = ff_accept(clientfd, NULL, NULL);
+      if (nclientfd < 0) {
+        break;
+      }
+      sc->clients.push_back(nclientfd);
+      available--;
+    } while (available);
   }
+  if (sc->clients.size() >= rte_lcore_count())
+    ff_stop_run();
+
   return 0;
 }
 
@@ -123,8 +124,8 @@ int main(int argc, char **argv) {
     ff_kevent(rc.kq, &rc.kevSet, 1, NULL, 0, NULL);
   }
   ff_run(receiver_fn, &rcs);
-  for(auto cl : sc.clients)
-      ff_close(cl);
+  for (auto cl : sc.clients)
+    ff_close(cl);
   ff_close(sc.sockfd);
   return 0;
 }
